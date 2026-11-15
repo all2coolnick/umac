@@ -112,6 +112,25 @@ static void     rom_patch_plusv3(uint8_t *rom_base)
          * things that aren't 128/512.  Skip that:
          */
         ROM_WR16(0x132, 0x6000); // Bra (was BEQ)
+
+        /* The ROM's RAM test (the routine at 0xe3c) writes test patterns
+         * over all of RAM, which takes very much longer on a non-128K
+         * config, and shows as several seconds of flicker/black screen on
+         * the Pico.  RAM is always good, so make it return "no errors"
+         * straight away: moveq #0, d0 ; jmp (a5)
+         */
+        ROM_WR16(0xe3c, 0x7000);
+        ROM_WR16(0xe3e, 0x4ed5);
+
+        /* The ROM's own beep routine (the startup chime, and SysBeep from
+         * e.g. the Control Panel's volume slider) has the sound buffer
+         * address hard-coded as 0x3ffd00 (top of 4MB, less 0x300): "lea
+         * $3ffd00.l, a0" at 0x290.  That only lands on the hardware
+         * sound buffer when RAM is a power of two (128K); otherwise the
+         * address wraps somewhere else.  Point it at RAM_SIZE-0x300:
+         */
+        ROM_WR16(0x292, (RAM_SIZE - 0x300) >> 16);
+        ROM_WR16(0x294, (RAM_SIZE - 0x300) & 0xffff);
         /* FIXME: We should also remove the memory probe routine, by
          * allowing the ROM checksum to fail (it returns failure, then
          * we carry on).  This avoids wild RAM addrs being accessed.

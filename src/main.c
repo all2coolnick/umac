@@ -71,6 +71,11 @@ uint8_t *_ram_base;
 uint8_t *_rom_base;
 
 int overlay = 1;
+
+/* Sound state, mirrored from the VIA so a host can fetch audio (see umac.h) */
+uint8_t umac_snd_volume = 0;    /* VIA RA[2:0]: 0 (quiet) .. 7 (loud) */
+uint8_t umac_snd_main_buf = 1;  /* VIA RA3: 1 = main buffer, 0 = alternate */
+uint8_t umac_snd_off = 1;       /* VIA RB7: 1 = sound disabled */
 static uint64_t global_time_us = 0;
 static int sim_done = 0;
 static jmp_buf main_loop_jb;
@@ -150,6 +155,8 @@ static void     via_ra_changed(uint8_t val)
         // 3 = snd.pg2 (sound buffer select)
         // [2:0] = sound volume
         overlay = !!(val & 0x10);
+        umac_snd_volume = val & 7;
+        umac_snd_main_buf = !!(val & 8);
         if ((oldval ^ val) & 0x10) {
                 MDBG("OVERLAY CHANGING\n");
                 update_overlay_layout();
@@ -166,7 +173,7 @@ static void     via_rb_changed(uint8_t val)
         // 4 = mouse4 (in, mouse X2)
         // 3 = mouse7 (in, 0 = button pressed)
         // [2:0] = RTC controls
-        (void)val;
+        umac_snd_off = !!(val & 0x80);
 }
 
 static uint8_t  via_ra_in(void)
