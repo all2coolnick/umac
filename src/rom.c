@@ -246,7 +246,12 @@ static void     rom_patch_plusv3(uint8_t *rom_base)
         ROM_WR16(0x1e6e, DISP_WIDTH);           /* mScrnSize */
         ROM_WR16(0x1e82, DISP_HEIGHT);          /* tScrnBitMap */
 
-        /* FIXME: Welcome To Macintosh is drawn at the wrong position. Find where that's done. */
+        /* The start-up "Welcome to Macintosh" box (DSAlertRect, $3F8) is set
+         * by ROM code at 0x1356 to (64,32)-(190,480): 32 px margins on a
+         * 512 px screen.  Keep the left edge and pull the right edge in so
+         * the margins stay equal.  (The immediate 480 is the word at 0x1360.)
+         */
+        ROM_WR16(0x1360, DISP_WIDTH - 32);
 #endif
 }
 

@@ -38,7 +38,7 @@ typedef struct {
         disc_op_write op_write;
 } disc_descr_t;
 
-#define DISC_NUM_DRIVES         2
+#define DISC_NUM_DRIVES         4
 
 /* Passed an array of descriptors of disc data:
  * FIXME: provide callbacks to fops->read/write etc. instead of needing

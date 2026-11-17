@@ -27,12 +27,14 @@
 extern void umac_disc_ejected(void);
 
 // B2 decls:
-static int16_t SonyOpen(uint32_t pb, uint32_t dce, uint32_t status);
+static int32_t SonyOpen(uint32_t pb, uint32_t dce, uint32_t status, unsigned int idx);
 static int16_t SonyPrime(uint32_t pb, uint32_t dce);
 static int16_t SonyControl(uint32_t pb, uint32_t dce);
 static int16_t SonyStatus(uint32_t pb, uint32_t dce);
 
 static void    SonyInit(disc_descr_t discs[DISC_NUM_DRIVES]);
+static int     SonyNumDrives(void);
+static int     SonyNextToMount(void);
 
 void    disc_init(disc_descr_t discs[DISC_NUM_DRIVES])
 {
@@ -47,12 +49,13 @@ int     disc_pv_hook(uint8_t opcode)
         uint32_t a0 = m68k_get_reg(NULL, M68K_REG_A0);
         uint32_t a1 = m68k_get_reg(NULL, M68K_REG_A1);
         uint32_t a2 = m68k_get_reg(NULL, M68K_REG_A2);
+        uint32_t d1 = m68k_get_reg(NULL, M68K_REG_D1);
         uint32_t d0 = 0;
 
         switch(opcode) {
         case 0: // Open
                 DDBG("[Disc: OPEN]\n");
-                d0 = SonyOpen(ADR24(a0), ADR24(a1), ADR24(a2));
+                d0 = SonyOpen(ADR24(a0), ADR24(a1), ADR24(a2), d1);
                 break;
         case 1: // Prime
                 DDBG("[Disc: PRIME]\n");
@@ -65,6 +68,13 @@ int     disc_pv_hook(uint8_t opcode)
         case 3: // Status
                 DDBG("[Disc: STATUS]\n");
                 d0 = SonyStatus(ADR24(a0), ADR24(a1));
+                break;
+
+        case 4: // Number of drives to install (called once, from Open)
+                d0 = SonyNumDrives();
+                break;
+        case 5: // Periodic: which drive needs a disk-inserted event, if any
+                d0 = SonyNextToMount();
                 break;
 
         default:
@@ -142,6 +152,7 @@ typedef struct sony_drive_info {
 
 // List of drives handled by this driver
 static sony_drinfo_t drives[DISC_NUM_DRIVES];
+static int n_drives;    // Number of valid entries in drives[] (packed from 0)
 
 /*
  *  Get reference to drive info or drives.end() if not found
@@ -149,7 +160,7 @@ static sony_drinfo_t drives[DISC_NUM_DRIVES];
 
 static sony_drinfo_t *get_drive_info(int num)
 {
-        for (int i = 0; i < DISC_NUM_DRIVES; i++) {
+        for (int i = 0; i < n_drives; i++) {
                 if (drives[i].num == num)
                         return &drives[i];
         }
@@ -162,15 +173,50 @@ static sony_drinfo_t *get_drive_info(int num)
 
 void SonyInit(disc_descr_t discs[DISC_NUM_DRIVES])
 {
-        drives[0].num = 0;
-        drives[0].to_be_mounted = 1;
-        drives[0].read_only = discs[0].read_only;
-        drives[0].data = discs[0].base;
-        drives[0].size = discs[0].size;
-        drives[0].op_ctx = discs[0].op_ctx;
-        drives[0].op_read = discs[0].op_read;
-        drives[0].op_write = discs[0].op_write;
-        // FIXME: Disc 2
+        /* Pack the usable discs into drives[]; the first is the boot drive
+         * (Mac drive number 1), the others become drives 2, 3, ...
+         */
+        n_drives = 0;
+        memset(drives, 0, sizeof(drives));
+        for (int i = 0; i < DISC_NUM_DRIVES; i++) {
+                if (!discs[i].size || (!discs[i].base && !discs[i].op_read))
+                        continue;
+                sony_drinfo_t *d = &drives[n_drives++];
+                d->num = 0;     // Assigned when the Mac opens the driver
+                d->to_be_mounted = 0;
+                d->read_only = discs[i].read_only;
+                d->data = discs[i].base;
+                d->size = discs[i].size;
+                d->op_ctx = discs[i].op_ctx;
+                d->op_read = discs[i].op_read;
+                d->op_write = discs[i].op_write;
+        }
+}
+
+static int SonyNumDrives(void)
+{
+        return n_drives;
+}
+
+/* Called periodically (accRun) by the driver stub: returns the Mac drive
+ * number of a drive that still needs a disk-inserted event posting, or 0.
+ * The boot disc is mounted by the ROM boot code, so only the other drives
+ * are announced, and only after the desktop has had time to come up.
+ */
+static int SonyNextToMount(void)
+{
+        static unsigned int ticks;
+        if (ticks < 300) {
+                ticks++;
+                return 0;
+        }
+        for (int i = 1; i < n_drives; i++) {
+                if (drives[i].to_be_mounted) {
+                        drives[i].to_be_mounted = 0;
+                        return drives[i].num;
+                }
+        }
+        return 0;
 }
 
 /*
@@ -212,7 +258,7 @@ const int SonyRefNum = -5;                              // RefNum of driver
 /*
  *  Driver Open() routine
  */
-int16_t SonyOpen(uint32_t pb, uint32_t dce, uint32_t status)
+int32_t SonyOpen(uint32_t pb, uint32_t dce, uint32_t status, unsigned int idx)
 {
 	DDBG("SonyOpen\n");
 
@@ -226,12 +272,12 @@ int16_t SonyOpen(uint32_t pb, uint32_t dce, uint32_t status)
 	// Clear DskErr
 	set_dsk_err(0);
 
-	// Install drives
-        //for (int drnum = 0; drnum < NUM_DRIVES; drnum++) {
-        const int drnum = 0;
-        sony_drinfo_t *info = &drives[drnum];
+	// Install drive number idx (the stub calls this once per drive)
+        if (idx >= (unsigned int)n_drives)
+                return -1;
+        sony_drinfo_t *info = &drives[idx];
 
-        info->num = FindFreeDriveNumber(1); // ? 1 for internal, 2 for external
+        info->num = FindFreeDriveNumber(1); // 1 for the boot drive, then 2, 3...
         info->to_be_mounted = 0;
 
         // Original code allocated drive status record here (invoked
@@ -256,14 +302,14 @@ int16_t SonyOpen(uint32_t pb, uint32_t dce, uint32_t status)
         WriteMacInt8(info->status + dsDiskInPlace, 1);	// Inserted removable disk
         WriteMacInt8(info->status + dsWriteProt, info->read_only ? 0xff : 0);
         DDBG(" disk inserted, flagging for mount\n");
-        info->to_be_mounted = 1;
+        info->to_be_mounted = (idx != 0);       // Boot drive is mounted by the ROM
 
         // Original code ddded drive to drive queue here (invoked trap
-        // to AddDrive), but our driver does this after this PV call returns.
-        // FIXME: In future return a bitmap of drives to add.
+        // to AddDrive), but our driver does this after this PV call returns,
+        // using the drive number we return.
         (void)pb;
 
-        return noErr;
+        return info->num;
 }
 
 
@@ -411,7 +457,9 @@ int16_t SonyControl(uint32_t pb, uint32_t dce)
 //				SysEject(info->fh);
 				WriteMacInt8(info->status + dsDiskInPlace, 0);
 
-                                umac_disc_ejected();
+                                /* Ejecting the boot disc restarts the Mac; the others just go offline. */
+                                if (info == &drives[0])
+                                        umac_disc_ejected();
 			}
 			break;
 
