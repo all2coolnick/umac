@@ -39,6 +39,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <setjmp.h>
+#include <stdbool.h>
 
 #include "machw.h"
 #include "m68k.h"
@@ -216,6 +217,7 @@ static uint8_t  via_rb_in(void)
  */
 #define KBD_CMD_GET_MODEL       0x16
 #define KBD_CMD_INQUIRY         0x10
+#define KBD_CMD_INSTANT         0x14
 #define KBD_MODEL               5
 #define KBD_RSP_NULL            0x7b
 
@@ -232,7 +234,14 @@ static void     via_sr_tx(uint8_t data)
         kbd_last_cmd_time = global_time_us;
 }
 
-static int kbd_pending_evt = -1;
+/* Bytes waiting to be returned to the Mac, one per Inquiry.  Keypad and
+ * arrow keys need a multi-byte sequence (0x79 prefix, etc.), and keys can
+ * arrive faster than the Mac polls, hence a queue.
+ */
+#define KBD_FIFO_SIZE           16
+static uint8_t kbd_fifo[KBD_FIFO_SIZE];
+static unsigned int kbd_fifo_head = 0;  /* Next to read */
+static unsigned int kbd_fifo_count = 0;
 /* Emulate the keyboard: receive commands (such as an inquiry, polling
  * for keypresses) and respond using via_sr_rx().
  */
@@ -243,12 +252,18 @@ static void     kbd_rx(uint8_t data)
         case KBD_CMD_GET_MODEL:
                 via_sr_rx(0x01 | (KBD_MODEL << 1));
                 break;
+        case KBD_CMD_INSTANT:
+                /* After a 0x79 (keypad) prefix the Mac fetches the key
+                 * code itself with an Instant command, and the next byte
+                 * of a sequence is returned just like for an Inquiry.
+                 */
         case KBD_CMD_INQUIRY:
-                if (kbd_pending_evt == -1) {
+                if (!kbd_fifo_count) {
                         via_sr_rx(KBD_RSP_NULL);
                 } else {
-                        via_sr_rx(kbd_pending_evt);
-                        kbd_pending_evt = -1;
+                        via_sr_rx(kbd_fifo[kbd_fifo_head]);
+                        kbd_fifo_head = (kbd_fifo_head + 1) % KBD_FIFO_SIZE;
+                        kbd_fifo_count--;
                 }
         break;
 
@@ -272,14 +287,27 @@ static void     kbd_check_work(void)
         }
 }
 
+unsigned int    umac_kbd_space(void)
+{
+        return KBD_FIFO_SIZE - kbd_fifo_count;
+}
+
+/* Queue a whole key sequence, or nothing if it won't fit.  Returns true if queued. */
+bool    umac_kbd_put(const uint8_t *bytes, unsigned int n)
+{
+        if (n > umac_kbd_space()) {
+                MDBG("KBD: FIFO full, dropping %u bytes\n", n);
+                return false;
+        }
+        for (unsigned int i = 0; i < n; i++)
+                kbd_fifo[(kbd_fifo_head + kbd_fifo_count++) % KBD_FIFO_SIZE] = bytes[i];
+        return true;
+}
+
 void    umac_kbd_event(uint8_t scancode, int down)
 {
-        if (kbd_pending_evt >= 0) {
-                MDBG("KBD: Received event %02x with event %02x pending!\n",
-                     scancode, kbd_pending_evt);
-                /* FIXME: Add a queue */
-        }
-        kbd_pending_evt = scancode | (down ? 0 : 0x80);
+        uint8_t b = scancode | (down ? 0 : 0x80);
+        umac_kbd_put(&b, 1);
 }
 
 // VIA IRQ output hook:

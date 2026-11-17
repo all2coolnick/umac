@@ -25,6 +25,7 @@
 #ifndef UMAC_H
 #define UMAC_H
 
+#include <stdbool.h>
 #include "disc.h"
 #include "via.h"
 #include "machw.h"
@@ -35,6 +36,9 @@ void    umac_reset(void);
 void    umac_opt_disassemble(int enable);
 void    umac_mouse(int deltax, int deltay, int button);
 void    umac_kbd_event(uint8_t scancode, int down);
+/* Queue raw keyboard bytes (e.g. a keypad sequence) atomically; false if no room */
+bool    umac_kbd_put(const uint8_t *bytes, unsigned int n);
+unsigned int    umac_kbd_space(void);
 
 static inline void      umac_vsync_event(void)
 {

@@ -49,7 +49,7 @@ static void     print_help(char *n)
         printf("Syntax: %s <options>\n"
                "\t-r <rom path>\t\tDefault 'rom.bin'\n"
                "\t-W <rom dump path>\tDump ROM after patching\n"
-               "\t-d <disc path>\n"
+               "\t-d <disc path>\t(repeat for more drives)\n"
                "\t-w\t\t\tEnable persistent disc writes (default R/O)\n"
                "\t-i\t\t\tDisassembled instruction trace\n", n);
 }
@@ -95,7 +95,8 @@ int     main(int argc, char *argv[])
         char *rom_filename = "rom.bin";
         char *rom_dump_filename = NULL;
         char *ram_filename = "ram.bin";
-        char *disc_filename = NULL;
+        char *disc_filenames[DISC_NUM_DRIVES] = {0};
+        int n_disc_files = 0;
         int ofd;
         int ch;
         int opt_disassemble = 0;
@@ -115,7 +116,11 @@ int     main(int argc, char *argv[])
                         break;
 
                 case 'd':
-                        disc_filename = strdup(optarg);
+                        if (n_disc_files >= DISC_NUM_DRIVES) {
+                                fprintf(stderr, "At most %d discs\n", DISC_NUM_DRIVES);
+                                return 1;
+                        }
+                        disc_filenames[n_disc_files++] = strdup(optarg);
                         break;
 
                 case 'w':
@@ -194,9 +199,9 @@ int     main(int argc, char *argv[])
 
         disc_descr_t discs[DISC_NUM_DRIVES] = {0};
 
-        if (disc_filename) {
+        for (int di = 0; di < n_disc_files; di++) {
+                char *disc_filename = disc_filenames[di];
                 printf("Opening disc '%s'\n", disc_filename);
-                // FIXME: >1 disc
                 ofd = open(disc_filename, opt_write ? O_RDWR : O_RDONLY);
                 if (ofd < 0) {
                         perror("Disc");
@@ -221,9 +226,9 @@ int     main(int argc, char *argv[])
                 }
                 printf("Disc mapped at %p, size %ld\n", (void *)disc_base, disc_size);
 
-                discs[0].base = disc_base;
-                discs[0].read_only = 0;         /* See above */
-                discs[0].size = disc_size;
+                discs[di].base = disc_base;
+                discs[di].read_only = 0;        /* See above */
+                discs[di].size = disc_size;
         }
 
         ////////////////////////////////////////////////////////////////////////
