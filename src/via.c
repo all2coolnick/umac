@@ -79,6 +79,14 @@ static const char *dbg_regnames[] = {
 };
 
 static uint8_t via_regs[16];
+static uint8_t via_t1l_lo, via_t1l_hi;
+
+uint16_t via_t1_invert_time(void)
+{
+        if ((via_regs[VIA_ACR] & 0xc0) != 0xc0)
+                return 0;
+        return ((uint16_t)via_t1l_hi << 8) | via_t1l_lo;
+}
 static struct via_cb via_callbacks;
 static int irq_status = 0;
 static uint8_t irq_active = 0;
@@ -187,6 +195,12 @@ void    via_write(unsigned int address, uint8_t data)
         const char *rname = dbg_regnames[r];
         (void)rname; // Unused if !DEBUG
         VDBG("[VIA: WR %02x -> %s (0x%x)]\n", data, rname, r);
+
+        /* Timer 1 latches (writes to T1C-L/T1L-L set low, T1C-H/T1L-H set high) */
+        if (r == VIA_T1CL || r == VIA_T1LL)
+                via_t1l_lo = data;
+        else if (r == VIA_T1CH || r == VIA_T1LH)
+                via_t1l_hi = data;
 
         int dowrite = 1;
         switch (r) {
