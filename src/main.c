@@ -177,6 +177,55 @@ static void     via_rb_changed(uint8_t val)
         umac_snd_off = !!(val & 0x80);
 }
 
+/* Copy out the current sound buffer.  If VIA Timer 1 is toggling PB7
+ * (ACR[7:6]==11) the Mac's sound output is switched on and off at the
+ * timer rate, which games use to make tones.  Model it as Mini vMac does:
+ * the half-period is T1 latch VIA clocks (783.36kHz); one sample is 35.2
+ * clocks, so one sample = 704 phase units, one clock = 20 units.
+ */
+#ifndef UMAC_AUDIO_SAMPLES
+#define UMAC_AUDIO_SAMPLES      370
+#endif
+
+int     umac_audio_get_frame(uint8_t *out, uint8_t *volume)
+{
+        static uint32_t inv_phase;
+        static int      inv_state;
+        uint16_t inv = via_t1_invert_time();
+
+        if (umac_snd_off && !inv)
+                return 0;
+        unsigned int base = RAM_SIZE - 0x300;
+        if (!umac_snd_main_buf)
+                base -= 0x5C00;
+        const uint8_t *p = _ram_base + base;
+        for (unsigned int i = 0; i < UMAC_AUDIO_SAMPLES; i++)
+                out[i] = p[i * 2];
+        if (inv) {
+                uint32_t incr = (uint32_t)inv * 20;
+                for (unsigned int i = 0; i < UMAC_AUDIO_SAMPLES; i++) {
+                        if (inv_phase < 704) {
+                                uint32_t on = 0, last = 0;
+                                do {
+                                        if (!inv_state)
+                                                on += inv_phase - last;
+                                        inv_state = !inv_state;
+                                        last = inv_phase;
+                                        inv_phase += incr;
+                                } while (inv_phase < 704);
+                                if (!inv_state)
+                                        on += 704 - last;
+                                out[i] = (uint8_t)((out[i] * on) / 704);
+                        } else if (inv_state) {
+                                out[i] = 0;
+                        }
+                        inv_phase -= 704;
+                }
+        }
+        *volume = umac_snd_volume;
+        return 1;
+}
+
 static uint8_t  via_ra_in(void)
 {
         return 0;
