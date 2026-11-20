@@ -253,6 +253,23 @@ static void     rom_patch_plusv3(uint8_t *rom_base)
          */
         ROM_WR16(0x1360, DISP_WIDTH - 32);
 #endif
+
+#if DISP_WIDTH == 512 && DISP_HEIGHT == 342 && defined(DISP_VISIBLE_WIDTH) && DISP_VISIBLE_WIDTH != 512
+        /* Classic memory layout, narrower screen.
+         *
+         * The framebuffer stays exactly where (and as wide as, 64 bytes per
+         * row) the Mac Plus ROM expects it, which some software relies on:
+         * it hard-codes the layout.  Only the screen's *width* is reduced, so
+         * the desktop, menu bar and icons fit a display that shows just the
+         * left DISP_VISIBLE_WIDTH pixels of each row.
+         */
+        ROM_WR16(0x498, DISP_VISIBLE_WIDTH);            /* screen x */
+        ROM_WR16(0xa10, DISP_VISIBLE_WIDTH);            /* x */
+        ROM_WR16(0x1d48, DISP_VISIBLE_WIDTH - 32);      /* cursor clipping */
+        ROM_WR16(0x1d4e, DISP_VISIBLE_WIDTH - 32);      /* cursor clipping */
+        ROM_WR16(0x1e6e, DISP_VISIBLE_WIDTH);           /* mScrnSize */
+        ROM_WR16(0x1360, DISP_VISIBLE_WIDTH - 32);      /* Welcome box right edge */
+#endif
 }
 
 int      rom_patch(uint8_t *rom_base)
